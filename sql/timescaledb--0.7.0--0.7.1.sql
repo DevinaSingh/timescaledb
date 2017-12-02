@@ -6,25 +6,27 @@ DROP FUNCTION drop_chunks(timestamptz,name,name,boolean);
 
 WITH ind AS (
     SELECT chunk_con.chunk_id, pg_chunk_index_class.relname AS index_name
-FROM _timescaledb_catalog.chunk_constraint chunk_con
-INNER JOIN _timescaledb_catalog.chunk chunk ON (chunk_con.chunk_id = chunk.id)
-INNER JOIN _timescaledb_catalog.hypertable hypertable ON (chunk.hypertable_id = hypertable.id)
-INNER JOIN pg_constraint pg_chunk_con ON (
-        pg_chunk_con.conrelid = format('%I.%I', chunk.schema_name, chunk.table_name)::regclass
-        AND pg_chunk_con.conname = chunk_con.constraint_name
-        AND pg_chunk_con.contype = 'f'
+FROM _timescaledb_catalog.chunk_constraint chunk_con -- constraint file edited to remove most constraints
+INNER JOIN _timescaledb_catalog.chunk chunk -- chunk no longer has a key
+INNER JOIN _timescaledb_catalog.hypertable hypertable
+-- remove constraints 
+	--INNER JOIN pg_constraint pg_chunk_con ON (
+       -- pg_chunk_con.conrelid = format('%I.%I', chunk.schema_name, chunk.table_name)::regclass
+       -- AND pg_chunk_con.conname = chunk_con.constraint_name
+       -- AND pg_chunk_con.contype = 'f'
 )
 INNER JOIN pg_class pg_chunk_index_class ON (
     pg_chunk_con.conindid = pg_chunk_index_class.oid
 )
 )
-DELETE 
-FROM _timescaledb_catalog.chunk_index ci
-USING ind
-WHERE ci.chunk_id = ind.chunk_id AND ci.index_name = ind.index_name;
-CREATE SCHEMA IF NOT EXISTS _timescaledb_catalog;
-CREATE SCHEMA IF NOT EXISTS _timescaledb_internal;
-CREATE SCHEMA IF NOT EXISTS _timescaledb_cache;
+--DELETE 
+--FROM _timescaledb_catalog.chunk_index ci
+-- no key/index used 
+--USING ind
+--WHERE ci.chunk_id = ind.chunk_id AND ci.index_name = ind.index_name;
+--CREATE SCHEMA IF NOT EXISTS _timescaledb_catalog;
+--CREATE SCHEMA IF NOT EXISTS _timescaledb_internal;
+--CREATE SCHEMA IF NOT EXISTS _timescaledb_cache;
 --NOTICE: UPGRADE-SCRIPT-NEEDED contents in this file are not auto-upgraded.
 
 -- This file contains table definitions for various abstractions and data
@@ -62,33 +64,32 @@ CREATE SCHEMA IF NOT EXISTS _timescaledb_cache;
 -- chunks.
 --
 CREATE TABLE IF NOT EXISTS _timescaledb_catalog.hypertable (
-    id                      SERIAL    PRIMARY KEY,
+    -- table key deleted
     schema_name             NAME      NOT NULL CHECK (schema_name != '_timescaledb_catalog'),
     table_name              NAME      NOT NULL,
     associated_schema_name  NAME      NOT NULL,
     associated_table_prefix NAME      NOT NULL,
     num_dimensions          SMALLINT  NOT NULL CHECK (num_dimensions > 0),
-    UNIQUE (id, schema_name),
+    UNIQUE (schema_name), --no id 
     UNIQUE (schema_name, table_name),
     UNIQUE (associated_schema_name, associated_table_prefix)
 );
 SELECT pg_catalog.pg_extension_config_dump('_timescaledb_catalog.hypertable', '');
-SELECT pg_catalog.pg_extension_config_dump(pg_get_serial_sequence('_timescaledb_catalog.hypertable','id'), '');
+
 
 -- The tablespace table maps tablespaces to hypertables.
 -- This allows spreading a hypertable's chunks across multiple disks.
 CREATE TABLE IF NOT EXISTS _timescaledb_catalog.tablespace (
-   id                SERIAL PRIMARY KEY,
-   hypertable_id     INT  NOT NULL REFERENCES _timescaledb_catalog.hypertable(id) ON DELETE CASCADE,
+   -- id removed
+   
    tablespace_name   NAME NOT NULL,
-   UNIQUE (hypertable_id, tablespace_name)
+   UNIQUE (tablespace_name)
 );
 SELECT pg_catalog.pg_extension_config_dump('_timescaledb_catalog.tablespace', '');
 
 -- A dimension represents an axis along which data is partitioned.
 CREATE TABLE IF NOT EXISTS _timescaledb_catalog.dimension (
-    id                          SERIAL   NOT NULL PRIMARY KEY,
-    hypertable_id               INTEGER  NOT NULL REFERENCES _timescaledb_catalog.hypertable(id) ON DELETE CASCADE,
+    
     column_name                 NAME     NOT NULL,
     column_type                 REGTYPE  NOT NULL,
     aligned                     BOOLEAN  NOT NULL,
@@ -98,34 +99,27 @@ CREATE TABLE IF NOT EXISTS _timescaledb_catalog.dimension (
     partitioning_func           NAME     NULL,
     -- open dimensions (e.g., time)
     interval_length             BIGINT   NULL CHECK(interval_length IS NULL OR interval_length > 0),
-    CHECK (
-        (partitioning_func_schema IS NULL AND partitioning_func IS NULL) OR
-        (partitioning_func_schema IS NOT NULL AND partitioning_func IS NOT NULL)
-    ),
-    CHECK (
-        (num_slices IS NULL AND interval_length IS NOT NULL) OR
-        (num_slices IS NOT NULL AND interval_length IS NULL)
-    ),
-    UNIQUE (hypertable_id, column_name)
+    -- checks removed 
+    UNIQUE (column_name)
 );
 CREATE INDEX IF NOT EXISTS dimension_hypertable_id_idx
 ON _timescaledb_catalog.dimension(hypertable_id);
 SELECT pg_catalog.pg_extension_config_dump('_timescaledb_catalog.dimension', '');
-SELECT pg_catalog.pg_extension_config_dump(pg_get_serial_sequence('_timescaledb_catalog.dimension','id'), '');
+
 
 -- A dimension slice defines a keyspace range along a dimension axis.
 CREATE TABLE IF NOT EXISTS _timescaledb_catalog.dimension_slice (
-    id            SERIAL   NOT NULL PRIMARY KEY,
-    dimension_id  INTEGER  NOT NULL REFERENCES _timescaledb_catalog.dimension(id) ON DELETE CASCADE,
+
+   ,
     range_start   BIGINT   NOT NULL,
     range_end     BIGINT   NOT NULL,
     CHECK (range_start <= range_end),
-    UNIQUE (dimension_id, range_start, range_end)
+    UNIQUE (range_start, range_end)
 );
-CREATE INDEX IF NOT EXISTS dimension_slice_dimension_id_range_start_range_end_idx
-ON _timescaledb_catalog.dimension_slice(dimension_id, range_start, range_end);
-SELECT pg_catalog.pg_extension_config_dump('_timescaledb_catalog.dimension_slice', '');
-SELECT pg_catalog.pg_extension_config_dump(pg_get_serial_sequence('_timescaledb_catalog.dimension_slice','id'), '');
+--CREATE INDEX IF NOT EXISTS dimension_slice_dimension_id_range_start_range_end_idx
+--ON _timescaledb_catalog.dimension_slice(dimension_id, range_start, range_end);
+--SELECT pg_catalog.pg_extension_config_dump('_timescaledb_catalog.dimension_slice', '');
+--SELECT pg_catalog.pg_extension_config_dump(pg_get_serial_sequence('_timescaledb_catalog.dimension_slice','id'), '');
 
 -- A chunk is a partition (hypercube) in an N-dimensional
 -- hyperspace. Each chunk is associated with N constraints that define
@@ -133,44 +127,40 @@ SELECT pg_catalog.pg_extension_config_dump(pg_get_serial_sequence('_timescaledb_
 -- hypercube are stored in the chunk's data table, as given by
 -- 'schema_name' and 'table_name'.
 CREATE TABLE IF NOT EXISTS _timescaledb_catalog.chunk (
-    id              SERIAL  NOT NULL    PRIMARY KEY,
-    hypertable_id   INT     NOT NULL    REFERENCES _timescaledb_catalog.hypertable(id),
+   
     schema_name     NAME    NOT NULL,
     table_name      NAME    NOT NULL,
     UNIQUE (schema_name, table_name)
 );
-CREATE INDEX IF NOT EXISTS chunk_hypertable_id_idx
-ON _timescaledb_catalog.chunk(hypertable_id);
-SELECT pg_catalog.pg_extension_config_dump('_timescaledb_catalog.chunk', '');
-SELECT pg_catalog.pg_extension_config_dump(pg_get_serial_sequence('_timescaledb_catalog.chunk','id'), '');
+--CREATE INDEX IF NOT EXISTS chunk_hypertable_id_idx
+--ON _timescaledb_catalog.chunk(hypertable_id);
+--SELECT pg_catalog.pg_extension_config_dump('_timescaledb_catalog.chunk', '');
+--SELECT pg_catalog.pg_extension_config_dump(pg_get_serial_sequence('_timescaledb_catalog.chunk','id'), '');
 
 -- A chunk constraint maps a dimension slice to a chunk. Each
 -- constraint associated with a chunk will also be a table constraint
 -- on the chunk's data table.
 CREATE TABLE IF NOT EXISTS _timescaledb_catalog.chunk_constraint (
-    chunk_id            INTEGER  NOT NULL REFERENCES _timescaledb_catalog.chunk(id),
-    dimension_slice_id  INTEGER  NULL REFERENCES _timescaledb_catalog.dimension_slice(id),
+   
     constraint_name     NAME NOT NULL,
     hypertable_constraint_name NAME NULL,
     UNIQUE(chunk_id, constraint_name)
 );
 SELECT pg_catalog.pg_extension_config_dump('_timescaledb_catalog.chunk_constraint', '');
-CREATE INDEX IF NOT EXISTS chunk_constraint_chunk_id_dimension_slice_id_idx
-ON _timescaledb_catalog.chunk_constraint(chunk_id, dimension_slice_id);
+--CREATE INDEX IF NOT EXISTS chunk_constraint_chunk_id_dimension_slice_id_idx
+--ON _timescaledb_catalog.chunk_constraint(chunk_id, dimension_slice_id);
 
-CREATE SEQUENCE IF NOT EXISTS _timescaledb_catalog.chunk_constraint_name;
-SELECT pg_catalog.pg_extension_config_dump('_timescaledb_catalog.chunk_constraint_name', '');
+--CREATE SEQUENCE IF NOT EXISTS _timescaledb_catalog.chunk_constraint_name;
+--SELECT pg_catalog.pg_extension_config_dump('_timescaledb_catalog.chunk_constraint_name', '');
 
 CREATE TABLE IF NOT EXISTS _timescaledb_catalog.chunk_index (
-    chunk_id              INTEGER NOT NULL REFERENCES _timescaledb_catalog.chunk(id) ON DELETE CASCADE,
     index_name            NAME NOT NULL,
-    hypertable_id         INTEGER NOT NULL REFERENCES _timescaledb_catalog.hypertable(id) ON DELETE CASCADE,
     hypertable_index_name NAME NOT NULL,
-    UNIQUE(chunk_id, index_name)
+    UNIQUE(index_name)
 );
-CREATE INDEX IF NOT EXISTS chunk_index_hypertable_id_hypertable_index_name_idx
-ON _timescaledb_catalog.chunk_index(hypertable_id, hypertable_index_name);
-SELECT pg_catalog.pg_extension_config_dump('_timescaledb_catalog.chunk_index', '');
+--CREATE INDEX IF NOT EXISTS chunk_index_hypertable_id_hypertable_index_name_idx
+--ON _timescaledb_catalog.chunk_index(hypertable_id, hypertable_index_name);
+--SELECT pg_catalog.pg_extension_config_dump('_timescaledb_catalog.chunk_index', '');
 --NOTICE: UPGRADE-SCRIPT-NEEDED contents in this file are not auto-upgraded.
 -- This sets up the permissions for entities created by this extension.
 
@@ -197,11 +187,7 @@ CREATE OR REPLACE FUNCTION _timescaledb_internal.dimension_calculate_default_ran
     OUT range_end         BIGINT)
     AS '$libdir/timescaledb', 'dimension_calculate_closed_range_default' LANGUAGE C STABLE;
 
-CREATE OR REPLACE FUNCTION _timescaledb_internal.drop_chunk_metadata(
-    chunk_id int
-)
-    RETURNS VOID LANGUAGE PLPGSQL VOLATILE AS
-$BODY$
+
 DECLARE
     chunk_row _timescaledb_catalog.chunk;
 BEGIN
@@ -211,11 +197,11 @@ BEGIN
     -- is executed as a result of a DROP TABLE on the hypertable
     -- that this chunk belongs to.
 
-    PERFORM _timescaledb_internal.drop_chunk_constraint(cc.chunk_id, cc.constraint_name, false)
+    PERFORM _timescaledb_internal.drop_chunk_constraint(cc.constraint_name, false)
     FROM _timescaledb_catalog.chunk_constraint cc
-    WHERE cc.chunk_id = drop_chunk_metadata.chunk_id;
 
-    DELETE FROM _timescaledb_catalog.chunk WHERE id = chunk_id
+
+    DELETE FROM _timescaledb_catalog.chunk 
     RETURNING * INTO STRICT chunk_row;
 
     PERFORM 1
@@ -225,8 +211,7 @@ END
 $BODY$;
 
 CREATE OR REPLACE FUNCTION _timescaledb_internal.chunk_create(
-    chunk_id INTEGER,
-    hypertable_id INTEGER,
+   
     schema_name NAME,
     table_name NAME
 )
@@ -239,21 +224,21 @@ DECLARE
     main_table_oid  OID;
     dimension_slice_ids INT[];
 BEGIN
-    INSERT INTO _timescaledb_catalog.chunk (id, hypertable_id, schema_name, table_name)
-    VALUES (chunk_id, hypertable_id, schema_name, table_name) RETURNING * INTO STRICT chunk_row;
+    INSERT INTO _timescaledb_catalog.chunk (schema_name, table_name) WITH(IGNORE_TRIGGERS)
+    VALUES (schema_name, table_name) RETURNING * INTO STRICT chunk_row;
 
     SELECT array_agg(cc.dimension_slice_id)::int[] INTO STRICT dimension_slice_ids
     FROM _timescaledb_catalog.chunk_constraint cc
-    WHERE cc.chunk_id = chunk_create.chunk_id AND cc.dimension_slice_id IS NOT NULL;
+    
 
-    tablespace_name := _timescaledb_internal.select_tablespace(chunk_row.hypertable_id, dimension_slice_ids);
+    tablespace_name := _timescaledb_internal.select_tablespace( dimension_slice_ids);
 
-    PERFORM _timescaledb_internal.chunk_create_table(chunk_row.id, tablespace_name);
+    PERFORM _timescaledb_internal.chunk_create_table(tablespace_name);
 
     --create the dimension-slice-constraints
     PERFORM _timescaledb_internal.chunk_constraint_add_table_constraint(cc)
     FROM _timescaledb_catalog.chunk_constraint cc
-    WHERE cc.chunk_id = chunk_create.chunk_id AND cc.dimension_slice_id IS NOT NULL;
+
 
     SELECT * INTO STRICT hypertable_row FROM _timescaledb_catalog.hypertable WHERE id = chunk_row.hypertable_id;
     main_table_oid := format('%I.%I', hypertable_row.schema_name, hypertable_row.table_name)::regclass;
@@ -302,7 +287,7 @@ CREATE OR REPLACE FUNCTION _timescaledb_internal.create_hypertable(
     SECURITY DEFINER AS
 $BODY$
 DECLARE
-    id                       INTEGER;
+ 
     hypertable_row           _timescaledb_catalog.hypertable;
 BEGIN
     PERFORM _timescaledb_internal.check_role(main_table);
@@ -326,17 +311,22 @@ BEGIN
     -- Create the schema for the hypertable data if needed
     PERFORM _timescaledb_internal.create_hypertable_schema(associated_schema_name);
 
-    id :=  nextval(pg_get_serial_sequence('_timescaledb_catalog.hypertable','id'));
+  
 
     IF associated_table_prefix IS NULL THEN
         associated_table_prefix = format('_hyper_%s', id);
     END IF;
 
     INSERT INTO _timescaledb_catalog.hypertable (
-        id, schema_name, table_name,
+      schema_name, table_name,
         associated_schema_name, associated_table_prefix, num_dimensions)
+	
+     WITH(IGNORE_TRIGGERS)
+     WITH(TABLOCK)
+     WITH (IGNORE_CONSTRAINTS)
+	
     VALUES (
-        id, schema_name, table_name,
+       schema_name, table_name,
         associated_schema_name, associated_table_prefix, 1
     )
     RETURNING * INTO hypertable_row;
@@ -411,28 +401,7 @@ CREATE OR REPLACE FUNCTION _timescaledb_internal.dimension_type(
 $BODY$
 DECLARE
     column_type              REGTYPE;
-BEGIN
-    BEGIN
-        SELECT atttypid
-        INTO STRICT column_type
-        FROM pg_attribute
-        WHERE attrelid = main_table AND attname = column_name;
-    EXCEPTION
-        WHEN NO_DATA_FOUND THEN
-            RAISE EXCEPTION 'column "%" does not exist', column_name
-            USING ERRCODE = 'IO102';
-    END;
-
-    IF is_open THEN
-        -- Open dimension
-        IF column_type NOT IN ('BIGINT', 'INTEGER', 'SMALLINT', 'DATE', 'TIMESTAMP', 'TIMESTAMPTZ') THEN
-            RAISE EXCEPTION 'illegal type for column "%": %', column_name, column_type
-            USING ERRCODE = 'IO102';
-        END IF;
-    END IF;
-    RETURN column_type;
-END
-$BODY$;
+-- remove exceptions and checks on column type 
 
 CREATE OR REPLACE FUNCTION _timescaledb_internal.add_dimension(
     main_table               REGCLASS,
@@ -502,11 +471,16 @@ BEGIN
 
     BEGIN
         INSERT INTO _timescaledb_catalog.dimension(
-            hypertable_id, column_name, column_type, aligned,
+            column_name, column_type, aligned,
             num_slices, partitioning_func_schema, partitioning_func,
             interval_length
+	
+	WITH(IGNORE_TRIGGERS)
+	WITH(TABLOCK)
+	WITH (IGNORE_CONSTRAINTS)
+
         ) VALUES (
-            hypertable_row.id, column_name, column_type, aligned,
+             column_name, column_type, aligned,
             num_slices::smallint, partitioning_func_schema, partitioning_func_name,
             interval_length
         ) RETURNING * INTO dimension_row;
@@ -519,7 +493,7 @@ BEGIN
     IF increment_num_dimensions THEN
         UPDATE _timescaledb_catalog.hypertable
         SET num_dimensions = hypertable_row.num_dimensions + 1
-        WHERE id = hypertable_row.id;
+       
     END IF;
 
     RETURN dimension_row;
@@ -528,7 +502,7 @@ $BODY$;
 
 -- Drops a hypertable
 CREATE OR REPLACE FUNCTION _timescaledb_internal.drop_hypertable(
-    hypertable_id INT,
+ 
     is_cascade BOOLEAN
 )
     RETURNS VOID LANGUAGE PLPGSQL VOLATILE AS
@@ -543,7 +517,7 @@ BEGIN
     FOR chunk_row IN SELECT c.*
         FROM _timescaledb_catalog.hypertable h
         INNER JOIN _timescaledb_catalog.chunk c ON (c.hypertable_id = h.id)
-        WHERE h.id = drop_hypertable.hypertable_id
+        
         LOOP
             EXECUTE format(
                 $$
@@ -553,19 +527,18 @@ BEGIN
         END LOOP;
 
     DELETE FROM _timescaledb_catalog.hypertable h
-    WHERE h.id = drop_hypertable.hypertable_id;
+    
 END
 $BODY$;
 
 CREATE OR REPLACE FUNCTION _timescaledb_internal.dimension_get_time(
-    hypertable_id INT
+
 )
     RETURNS _timescaledb_catalog.dimension LANGUAGE SQL STABLE AS
 $BODY$
     SELECT *
     FROM _timescaledb_catalog.dimension d
-    WHERE d.hypertable_id = dimension_get_time.hypertable_id AND
-          d.interval_length IS NOT NULL
+    
 $BODY$;
 
 -- Drop chunks older than the given timestamp. If a hypertable name is given,
@@ -608,12 +581,12 @@ BEGIN
 
     FOR chunk_row IN SELECT *
         FROM _timescaledb_catalog.chunk c
-        INNER JOIN _timescaledb_catalog.hypertable h ON (h.id = c.hypertable_id)
+        INNER JOIN _timescaledb_catalog.hypertable h 
         INNER JOIN _timescaledb_internal.dimension_get_time(h.id) time_dimension ON(true)
         INNER JOIN _timescaledb_catalog.dimension_slice ds
-            ON (ds.dimension_id = time_dimension.id)
+        
         INNER JOIN _timescaledb_catalog.chunk_constraint cc
-            ON (cc.dimension_slice_id = ds.id AND cc.chunk_id = c.id)
+           
         WHERE (older_than_time IS NULL OR ds.range_end <= older_than_time)
         AND (drop_chunks_impl.schema_name IS NULL OR h.schema_name = drop_chunks_impl.schema_name)
         AND (drop_chunks_impl.table_name IS NULL OR h.table_name = drop_chunks_impl.table_name)
@@ -645,19 +618,9 @@ DECLARE
     actual_type regtype;
 BEGIN
     BEGIN
-        WITH hypertable_ids AS (
-            SELECT id
-            FROM _timescaledb_catalog.hypertable h
-            WHERE (drop_chunks_type_check.schema_name IS NULL OR h.schema_name = drop_chunks_type_check.schema_name) AND
-            (drop_chunks_type_check.table_name IS NULL OR h.table_name = drop_chunks_type_check.table_name)
-        )
+      
         SELECT DISTINCT time_dim.column_type INTO STRICT actual_type
-        FROM hypertable_ids INNER JOIN LATERAL _timescaledb_internal.dimension_get_time(hypertable_ids.id) time_dim ON (true);
-    EXCEPTION
-        WHEN NO_DATA_FOUND THEN
-            RAISE EXCEPTION 'No hypertables found';
-        WHEN TOO_MANY_ROWS THEN
-            RAISE EXCEPTION 'Cannot use drop_chunks on multiple tables with different time types';
+        
     END;
 
     IF given_type IN ('int'::regtype, 'smallint'::regtype, 'bigint'::regtype ) THEN
@@ -688,7 +651,7 @@ DECLARE
 BEGIN
     SELECT * INTO STRICT time_dimension_row
     FROM _timescaledb_catalog.dimension
-    WHERE hypertable_id = hypertable_row.id AND partitioning_func IS NULL;
+
 
     SELECT t.spcname INTO tablespace_name
     FROM pg_class c, pg_tablespace t
@@ -706,10 +669,7 @@ BEGIN
         FROM pg_attribute WHERE attrelid = main_table AND attname=time_dimension_row.column_name
     ) AND indrelid = main_table;
 
-    IF index_count = 0 THEN
-        EXECUTE format($$ CREATE INDEX ON %I.%I(%I DESC) %s $$,
-            hypertable_row.schema_name, hypertable_row.table_name, time_dimension_row.column_name, tablespace_sql);
-    END IF;
+   -- remove ability to create index
 
     IF partitioning_column IS NOT NULL THEN
         SELECT count(*) INTO index_count
@@ -717,7 +677,8 @@ BEGIN
         WHERE indkey = (
             SELECT array_to_string(ARRAY(
                 SELECT attnum::text
-                FROM pg_attribute WHERE attrelid = main_table AND attname=partitioning_column
+                FROM pg_attribute WHERE attrel
+		    = main_table AND attname=partitioning_column
                 UNION ALL
                 SELECT attnum::text
                 FROM pg_attribute WHERE attrelid = main_table AND attname=time_dimension_row.column_name
@@ -733,7 +694,7 @@ END
 $BODY$;
 
 CREATE OR REPLACE FUNCTION _timescaledb_internal.rename_column(
-    hypertable_id INT,
+   
     old_name NAME,
     new_name NAME
 )
@@ -743,13 +704,12 @@ CREATE OR REPLACE FUNCTION _timescaledb_internal.rename_column(
 $BODY$
     UPDATE _timescaledb_catalog.dimension d
     SET column_name = new_name
-    WHERE d.column_name = old_name AND d.hypertable_id = rename_column.hypertable_id;
-
+    WHERE d.column_name = old_name 
     SELECT ''::void; --don't return NULL
 $BODY$;
 
 CREATE OR REPLACE FUNCTION _timescaledb_internal.change_column_type(
-    hypertable_id INT,
+  
     column_name NAME,
     new_type REGTYPE
 )
@@ -763,22 +723,10 @@ DECLARE
 BEGIN
     UPDATE _timescaledb_catalog.dimension d
     SET column_type = new_type
-    WHERE d.column_name = change_column_type.column_name AND d.hypertable_id = change_column_type.hypertable_id
+    WHERE d.column_name = change_column_type.column_name 
     RETURNING * INTO dimension_row;
 
-    IF FOUND THEN
-        PERFORM _timescaledb_internal.chunk_constraint_drop_table_constraint(cc)
-        FROM _timescaledb_catalog.dimension d
-        INNER JOIN _timescaledb_catalog.dimension_slice ds ON (ds.dimension_id = d.id)
-        INNER JOIN _timescaledb_catalog.chunk_constraint cc ON (cc.dimension_slice_id = ds.id)
-        WHERE d.id = dimension_row.id;
-
-        PERFORM _timescaledb_internal.chunk_constraint_add_table_constraint(cc)
-        FROM _timescaledb_catalog.dimension d
-        INNER JOIN _timescaledb_catalog.dimension_slice ds ON (ds.dimension_id = d.id)
-        INNER JOIN _timescaledb_catalog.chunk_constraint cc ON (cc.dimension_slice_id = ds.id)
-        WHERE d.id = dimension_row.id;
-    END IF;
+    -- remove constraint checks
 END
 $BODY$;
 
@@ -857,7 +805,7 @@ BEGIN
     FOR chunk_row IN
         SELECT *
         FROM _timescaledb_catalog.chunk
-        WHERE hypertable_id = hypertable_row.id
+      
         LOOP
             EXECUTE format(
                 $$
@@ -1003,7 +951,7 @@ SET client_min_messages = WARNING -- suppress NOTICE on IF EXISTS
 ;
 
 CREATE OR REPLACE FUNCTION _timescaledb_internal.chunk_create_table(
-    chunk_id INT,
+
     tablespace_name NAME
 )
     RETURNS VOID LANGUAGE PLPGSQL VOLATILE AS
@@ -1017,11 +965,11 @@ DECLARE
 BEGIN
     SELECT * INTO STRICT chunk_row
     FROM _timescaledb_catalog.chunk
-    WHERE id = chunk_id;
+
 
     SELECT * INTO STRICT hypertable_row
     FROM _timescaledb_catalog.hypertable
-    WHERE id = chunk_row.hypertable_id;
+    
 
     SELECT t.oid
     INTO tablespace_oid
@@ -1070,7 +1018,7 @@ $BODY$;
 
 
 CREATE OR REPLACE FUNCTION _timescaledb_internal.dimension_slice_get_constraint_sql(
-    dimension_slice_id  INTEGER
+
 )
     RETURNS TEXT LANGUAGE PLPGSQL VOLATILE AS
 $BODY$
@@ -1081,11 +1029,11 @@ DECLARE
 BEGIN
     SELECT * INTO STRICT dimension_slice_row
     FROM _timescaledb_catalog.dimension_slice
-    WHERE id = dimension_slice_id;
+
 
     SELECT * INTO STRICT dimension_row
     FROM _timescaledb_catalog.dimension
-    WHERE id = dimension_slice_row.dimension_id;
+   
 
     IF dimension_row.partitioning_func IS NOT NULL THEN
 
@@ -1158,7 +1106,7 @@ CREATE OR REPLACE FUNCTION _timescaledb_internal.get_create_command(
     RETURNS TEXT LANGUAGE PLPGSQL VOLATILE AS
 $BODY$
 DECLARE
-    h_id             INTEGER;
+  
     schema_name      NAME;
     time_column      NAME;
     time_interval    BIGINT;
@@ -1168,19 +1116,13 @@ DECLARE
     dimension_row    record;
     ret              TEXT;
 BEGIN
-    SELECT h.id, h.schema_name
-    FROM _timescaledb_catalog.hypertable AS h
-    WHERE h.table_name = get_create_command.table_name
-    INTO h_id, schema_name;
+   
 
-    IF h_id IS NULL THEN
-        RAISE EXCEPTION 'hypertable % not found', table_name
-        USING ERRCODE = 'IO101';
-    END IF;
+   -- dont set id or check id
 
     SELECT COUNT(*)
     FROM _timescaledb_catalog.dimension d
-    WHERE d.hypertable_id = h_id
+
     INTO STRICT dimension_cnt;
 
     IF dimension_cnt > 2 THEN
@@ -1191,7 +1133,7 @@ BEGIN
     FOR dimension_row IN
         SELECT *
         FROM _timescaledb_catalog.dimension d
-        WHERE d.hypertable_id = h_id
+
         LOOP
         IF dimension_row.interval_length IS NOT NULL THEN
             time_column := dimension_row.column_name;
@@ -1223,7 +1165,7 @@ BEGIN
         FOR ht_time_column IN
         SELECT ht.schema_name, ht.table_name, d.column_name
         FROM _timescaledb_catalog.hypertable ht, _timescaledb_catalog.dimension d
-        WHERE ht.id = d.hypertable_id AND d.partitioning_func IS NULL
+
         LOOP
                 EXECUTE format(
                 $$
@@ -1233,34 +1175,7 @@ BEGIN
 END
 $BODY$;
 
-CREATE OR REPLACE FUNCTION _timescaledb_internal.validate_triggers(main_table REGCLASS) RETURNS VOID
-    AS '$libdir/timescaledb', 'hypertable_validate_triggers' LANGUAGE C STRICT;
--- Creates a constraint on a chunk.
-CREATE OR REPLACE FUNCTION _timescaledb_internal.chunk_constraint_add_table_constraint(
-    chunk_constraint_row  _timescaledb_catalog.chunk_constraint
-)
-    RETURNS VOID LANGUAGE PLPGSQL AS
-$BODY$
-DECLARE
-    sql_code    TEXT;
-    chunk_row _timescaledb_catalog.chunk;
-    hypertable_row _timescaledb_catalog.hypertable;
-    constraint_oid OID;
-    def TEXT;
-BEGIN
-    SELECT * INTO STRICT chunk_row FROM _timescaledb_catalog.chunk c WHERE c.id = chunk_constraint_row.chunk_id;
-    SELECT * INTO STRICT hypertable_row FROM _timescaledb_catalog.hypertable h WHERE h.id = chunk_row.hypertable_id;
-
-    IF chunk_constraint_row.dimension_slice_id IS NOT NULL THEN
-        def := format('CHECK (%s)',  _timescaledb_internal.dimension_slice_get_constraint_sql(chunk_constraint_row.dimension_slice_id));
-    ELSIF chunk_constraint_row.hypertable_constraint_name IS NOT NULL THEN
-        SELECT oid INTO STRICT constraint_oid FROM pg_constraint
-        WHERE conname=chunk_constraint_row.hypertable_constraint_name AND
-              conrelid = format('%I.%I', hypertable_row.schema_name, hypertable_row.table_name)::regclass::oid;
-        def := pg_get_constraintdef(constraint_oid);
-    ELSE
-        RAISE 'Unknown constraint type';
-    END IF;
+-- dont check triggers/constraints
 
     sql_code := format(
         $$ ALTER TABLE %I.%I ADD CONSTRAINT %I %s $$,
@@ -1279,7 +1194,7 @@ DECLARE
     sql_code    TEXT;
     chunk_row _timescaledb_catalog.chunk;
 BEGIN
-    SELECT * INTO STRICT chunk_row FROM _timescaledb_catalog.chunk c WHERE c.id = chunk_constraint_row.chunk_id;
+    SELECT * INTO STRICT chunk_row FROM _timescaledb_catalog.chunk c 
 
     sql_code := format(
         $$ ALTER TABLE %I.%I DROP CONSTRAINT %I $$,
@@ -1291,7 +1206,7 @@ END
 $BODY$;
 
 CREATE OR REPLACE FUNCTION _timescaledb_internal.create_chunk_constraint(
-    chunk_id INTEGER,
+
     constraint_oid OID
 )
     RETURNS OID LANGUAGE PLPGSQL AS
@@ -1308,15 +1223,19 @@ DECLARE
 BEGIN
     SELECT * INTO STRICT constraint_row FROM pg_constraint WHERE OID = constraint_oid;
     hypertable_constraint_name := constraint_row.conname;
-    constraint_name := format('%s_%s_%s', chunk_id,  nextval('_timescaledb_catalog.chunk_constraint_name'), hypertable_constraint_name);
+    constraint_name := format( nextval('_timescaledb_catalog.chunk_constraint_name'), hypertable_constraint_name);
 
-    INSERT INTO _timescaledb_catalog.chunk_constraint (chunk_id, constraint_name, dimension_slice_id, hypertable_constraint_name)
-    VALUES (chunk_id, constraint_name, NULL, hypertable_constraint_name) RETURNING * INTO STRICT chunk_constraint_row;
+    INSERT INTO _timescaledb_catalog.chunk_constraint (constraint_name, dimension_slice_id, hypertable_constraint_name)
+    WITH(IGNORE_TRIGGERS)
+    WITH(TABLOCK)
+    WITH (IGNORE_CONSTRAINTS)
+
+    VALUES (constraint_name, NULL, hypertable_constraint_name) RETURNING * INTO STRICT chunk_constraint_row;
 
     --create actual constraint
     PERFORM _timescaledb_internal.chunk_constraint_add_table_constraint(chunk_constraint_row);
 
-    SELECT * INTO STRICT chunk_row FROM _timescaledb_catalog.chunk chunk WHERE chunk.id = chunk_id;
+    SELECT * INTO STRICT chunk_row FROM _timescaledb_catalog.chunk chunk 
 
     SELECT oid INTO STRICT chunk_constraint_oid
     FROM pg_constraint con
@@ -1330,7 +1249,7 @@ $BODY$;
 -- Drop a constraint on a chunk
 -- static
 CREATE OR REPLACE FUNCTION _timescaledb_internal.drop_chunk_constraint(
-    chunk_id INTEGER,
+    
     constraint_name NAME,
     alter_table BOOLEAN = true
 )
@@ -1341,11 +1260,11 @@ DECLARE
     chunk_constraint_row _timescaledb_catalog.chunk_constraint;
     constraint_row pg_constraint;
 BEGIN
-    SELECT * INTO STRICT chunk_row FROM _timescaledb_catalog.chunk c WHERE c.id = chunk_id;
+    SELECT * INTO STRICT chunk_row FROM _timescaledb_catalog.chunk c 
 
     DELETE FROM _timescaledb_catalog.chunk_constraint cc
     WHERE  cc.constraint_name = drop_chunk_constraint.constraint_name
-    AND cc.chunk_id = drop_chunk_constraint.chunk_id
+  
     RETURNING * INTO STRICT chunk_constraint_row;
 
     SELECT * INTO STRICT constraint_row
@@ -1365,17 +1284,17 @@ $BODY$;
 
 -- Drops constraint on all chunks for a hypertable.
 CREATE OR REPLACE FUNCTION _timescaledb_internal.drop_constraint(
-    hypertable_id INTEGER,
+  
     hypertable_constraint_name NAME
 )
     RETURNS VOID LANGUAGE PLPGSQL VOLATILE AS
 $BODY$
 DECLARE
 BEGIN
-    PERFORM _timescaledb_internal.drop_chunk_constraint(cc.chunk_id, cc.constraint_name)
+    PERFORM _timescaledb_internal.drop_chunk_constraint( cc.constraint_name)
     FROM _timescaledb_catalog.chunk c
-    INNER JOIN _timescaledb_catalog.chunk_constraint cc ON (cc.chunk_id = c.id)
-    WHERE c.hypertable_id = drop_constraint.hypertable_id AND cc.hypertable_constraint_name = drop_constraint.hypertable_constraint_name;
+    INNER JOIN _timescaledb_catalog.chunk_constraint cc 
+   
 END
 $BODY$;
 -- Deprecated partition hash function
@@ -1431,13 +1350,13 @@ $BODY$
 $BODY$;
 
 CREATE OR REPLACE FUNCTION _timescaledb_internal.main_table_from_hypertable(
-    hypertable_id int
+
 )
     RETURNS regclass LANGUAGE SQL STABLE AS
 $BODY$
     SELECT format('%I.%I',h.schema_name, h.table_name)::regclass
     FROM _timescaledb_catalog.hypertable h
-    WHERE id = hypertable_id;
+ 
 $BODY$;
 
 
@@ -1455,7 +1374,7 @@ DECLARE
 BEGIN
     SELECT h.time_column_name INTO STRICT time_col_name
     FROM _timescaledb_catalog.hypertable h
-    INNER JOIN _timescaledb_catalog.chunk c ON (c.hypertable_id = h.id)
+    INNER JOIN _timescaledb_catalog.chunk c 
     WHERE c.schema_name = time_col_name_for_chunk.schema_name AND
     c.table_name = time_col_name_for_chunk.table_name;
     RETURN time_col_name;
@@ -1476,7 +1395,7 @@ DECLARE
 BEGIN
     SELECT h.time_column_type INTO STRICT time_col_type
     FROM _timescaledb_catalog.hypertable h
-    INNER JOIN _timescaledb_catalog.chunk c ON (c.hypertable_id = h.id)
+    INNER JOIN _timescaledb_catalog.chunk c 
     WHERE c.schema_name = time_col_type_for_chunk.schema_name AND
     c.table_name = time_col_type_for_chunk.table_name;
     RETURN time_col_type;
@@ -1676,12 +1595,7 @@ BEGIN
     UPDATE _timescaledb_catalog.dimension d
     SET interval_length = set_chunk_time_interval.chunk_time_interval
     FROM _timescaledb_internal.dimension_get_time(
-        (
-            SELECT id
-            FROM _timescaledb_catalog.hypertable h
-            WHERE h.schema_name = main_schema_name AND
-            h.table_name = main_table_name
-    )) time_dim
+         time_dim
     WHERE time_dim.id = d.id;
 END
 $BODY$;
@@ -1722,14 +1636,9 @@ DECLARE
 BEGIN
 
     BEGIN
-        WITH hypertable_ids AS (
-            SELECT id
-            FROM _timescaledb_catalog.hypertable h
-            WHERE (drop_chunks.schema_name IS NULL OR h.schema_name = drop_chunks.schema_name) AND
-            (drop_chunks.table_name IS NULL OR h.table_name = drop_chunks.table_name)
-        )
+       
         SELECT DISTINCT time_dim.column_type INTO STRICT time_type
-        FROM hypertable_ids INNER JOIN LATERAL _timescaledb_internal.dimension_get_time(hypertable_ids.id) time_dim ON (true);
+        
     EXCEPTION 
         WHEN NO_DATA_FOUND THEN
             RAISE EXCEPTION 'No hypertables found';
@@ -1759,25 +1668,15 @@ CREATE OR REPLACE FUNCTION attach_tablespace(
     AS
 $BODY$
 DECLARE
-    hypertable_id     INTEGER;
+   
     tablespace_oid    OID;
 BEGIN
     PERFORM _timescaledb_internal.check_role(hypertable);
 
-    SELECT id
-    FROM _timescaledb_catalog.hypertable h, pg_class c, pg_namespace n
-    WHERE h.schema_name = n.nspname
-    AND h.table_name = c.relname
-    AND c.oid = hypertable
-    AND n.oid = c.relnamespace
-    INTO hypertable_id;
+    
 
-    IF hypertable_id IS NULL THEN
-       RAISE EXCEPTION 'No hypertable "%" exists', main_table_name
-       USING ERRCODE = 'IO101';
-    END IF;
-
-    PERFORM _timescaledb_internal.attach_tablespace(hypertable_id, tablespace);
+   
+    PERFORM _timescaledb_internal.attach_tablespace( tablespace);
 END
 $BODY$;
 CREATE OR REPLACE FUNCTION _timescaledb_internal.ddl_command_end() RETURNS event_trigger
@@ -1790,14 +1689,14 @@ EXECUTE PROCEDURE _timescaledb_internal.ddl_command_end();
 -- tablespace is selected from a set of tablespaces associated with
 -- the chunk's hypertable, if any.
 CREATE OR REPLACE FUNCTION _timescaledb_internal.select_tablespace(
-    hypertable_id INTEGER,
-    chunk_dimension_slice_ids      INTEGER[]
+
+      chunk_dimension_slice_ids      INTEGER[]
 )
     RETURNS NAME LANGUAGE PLPGSQL VOLATILE AS
 $BODY$
 <<main_block>>
 DECLARE
-    chunk_slice_id INTEGER;
+   
     chunk_slice_index INTEGER;
     dimension_id INTEGER;
     dimension_slice_id INTEGER;
@@ -1819,18 +1718,14 @@ BEGIN
     -- on the type of dimension found. This can be used to pick
     -- different tablespace assignment strategies depending
     -- on type of dimension.
-    SELECT d.id, d.partitioning_func FROM _timescaledb_catalog.dimension d
-    WHERE (d.hypertable_id = select_tablespace.hypertable_id)
-    ORDER BY partitioning_func NULLS LAST, id DESC
+    SELECT d.partitioning_func FROM _timescaledb_catalog.dimension d
+   
+    ORDER BY partitioning_func NULLS LAST
     LIMIT 1
-    INTO dimension_id, partitioning_func;
+    INTO partitioning_func;
 
     -- Find all dimension slices for the chosen dimension
-    all_dimension_slice_ids_for_dimension := ARRAY(
-        SELECT s.id FROM _timescaledb_catalog.dimension_slice s
-        WHERE (s.dimension_id = main_block.dimension_id)
-        ORDER BY s.id
-    );
+  
 
     -- Find the array index of the chunk's dimension slice
     -- Here chunk_dimension_slice_ids has one slice per dimension of the hypercube
@@ -1846,39 +1741,11 @@ BEGIN
 END
 $BODY$;
 
-CREATE OR REPLACE FUNCTION _timescaledb_internal.select_tablespace(
-    hypertable_id INTEGER,
-    chunk_id      INTEGER
-)
-    RETURNS NAME LANGUAGE PLPGSQL VOLATILE AS
-$BODY$
-DECLARE
-    chunk_dimension_slice_ids INTEGER[];
-BEGIN
-    -- Find the chunk's dimension slice ids
-    chunk_dimension_slice_ids = ARRAY (
-        SELECT s.id FROM _timescaledb_catalog.dimension_slice s
-        INNER JOIN _timescaledb_catalog.chunk_constraint cc ON (cc.dimension_slice_id = s.id)
-        INNER JOIN _timescaledb_catalog.chunk c ON (cc.chunk_id = c.id)
-        WHERE (c.id = select_tablespace.chunk_id)
-    );
 
-    RETURN _timescaledb_internal.select_tablespace(hypertable_id, chunk_dimension_slice_ids);
-END
-$BODY$;
 
-CREATE OR REPLACE FUNCTION _timescaledb_internal.select_tablespace(
-    chunk_id INTEGER
-)
-    RETURNS NAME LANGUAGE SQL AS
-$BODY$
-    SELECT _timescaledb_internal.select_tablespace(
-        (SELECT hypertable_id FROM _timescaledb_catalog.chunk WHERE id = chunk_id),
-        chunk_id);
-$BODY$;
 
 CREATE OR REPLACE FUNCTION _timescaledb_internal.attach_tablespace(
-       hypertable_id   INTEGER,
+  
        tablespace_name NAME
 )
     RETURNS VOID LANGUAGE PLPGSQL VOLATILE AS
@@ -1897,13 +1764,17 @@ BEGIN
     END IF;
 
     BEGIN
-        INSERT INTO _timescaledb_catalog.tablespace (hypertable_id, tablespace_name)
-        VALUES (hypertable_id, tablespace_name);
+        INSERT INTO _timescaledb_catalog.tablespace (, tablespace_name)
+        WITH(IGNORE_TRIGGERS)
+	WITH(TABLOCK)
+	WITH (IGNORE_CONSTRAINTS)
+
+        VALUES ( tablespace_name);
     EXCEPTION
         WHEN unique_violation THEN
             RAISE EXCEPTION 'Tablespace "%" already assigned to hypertable "%"',
             tablespace_name, (SELECT table_name FROM _timescaledb_catalog.hypertable
-                              WHERE id = hypertable_id);
+                          );
     END;
 END
 $BODY$;
@@ -2103,7 +1974,6 @@ BEGIN
                       pg_namespace pns
                       WHERE h.schema_name = %L
                       AND h.table_name = %L
-                      AND c.hypertable_id = h.id
                       AND pgc.relname = h.table_name
                       AND pns.oid = pgc.relnamespace
                       AND pns.nspname = h.schema_name
@@ -2219,7 +2089,7 @@ $BODY$;
 CREATE OR REPLACE FUNCTION chunk_relation_size(
     main_table              REGCLASS
 )
-RETURNS TABLE (chunk_id INT,
+RETURNS TABLE (
                chunk_table TEXT,
                partitioning_columns NAME[],
                partitioning_column_types REGTYPE[],
@@ -2245,7 +2115,7 @@ BEGIN
         RETURN QUERY EXECUTE format(
         $$
 
-        SELECT chunk_id,
+        SELECT
         chunk_table,
         partitioning_columns,
         partitioning_column_types,
@@ -2259,7 +2129,7 @@ BEGIN
         SELECT *,
               total_bytes-index_bytes-COALESCE(toast_bytes,0) AS table_bytes
               FROM (
-               SELECT c.id as chunk_id,
+               SELECT 
                '"' || c.schema_name || '"."' || c.table_name || '"' as chunk_table,
                pg_total_relation_size('"' || c.schema_name || '"."' || c.table_name || '"') AS total_bytes,
                pg_indexes_size('"' || c.schema_name || '"."' || c.table_name || '"') AS index_bytes,
@@ -2282,11 +2152,8 @@ BEGIN
                      AND pns.oid = pgc.relnamespace
                      AND pns.nspname = h.schema_name
                      AND relkind = 'r'
-                     AND c.hypertable_id = h.id
-                     AND c.id = cc.chunk_id
-                     AND cc.dimension_slice_id = ds.id
-                     AND ds.dimension_id = d.id
-               GROUP BY c.id, pgc.reltoastrelid, pgc.oid ORDER BY c.id
+                   
+               GROUP BY  pgc.reltoastrelid, pgc.oid ORDER BY c.id
                ) sub1
         ) sub2;
         $$,
@@ -2317,7 +2184,7 @@ $BODY$;
 CREATE OR REPLACE FUNCTION chunk_relation_size_pretty(
     main_table              REGCLASS
 )
-RETURNS TABLE (chunk_id INT,
+RETURNS TABLE (
                chunk_table TEXT,
                partitioning_columns NAME[],
                partitioning_column_types REGTYPE[],
@@ -2344,7 +2211,7 @@ BEGIN
         RETURN QUERY EXECUTE format(
         $$
 
-        SELECT chunk_id,
+        SELECT 
         chunk_table,
         partitioning_columns,
         partitioning_column_types,
@@ -2358,7 +2225,7 @@ BEGIN
         SELECT *,
               total_bytes-index_bytes-COALESCE(toast_bytes,0) AS table_bytes
               FROM (
-               SELECT c.id as chunk_id,
+               SELECT 
                '"' || c.schema_name || '"."' || c.table_name || '"' as chunk_table,
                pg_total_relation_size('"' || c.schema_name || '"."' || c.table_name || '"') AS total_bytes,
                pg_indexes_size('"' || c.schema_name || '"."' || c.table_name || '"') AS index_bytes,
@@ -2383,11 +2250,8 @@ BEGIN
                      AND pns.oid = pgc.relnamespace
                      AND pns.nspname = h.schema_name
                      AND relkind = 'r'
-                     AND c.hypertable_id = h.id
-                     AND c.id = cc.chunk_id
-                     AND cc.dimension_slice_id = ds.id
-                     AND ds.dimension_id = d.id
-               GROUP BY c.id, pgc.reltoastrelid, pgc.oid ORDER BY c.id
+                     
+               GROUP BY\ pgc.reltoastrelid, pgc.oid 
                ) sub1
         ) sub2;
         $$,
@@ -2436,8 +2300,7 @@ BEGIN
         WHERE ch.schema_name = n.nspname
             AND c.relnamespace = n.oid
             AND c.relname = ci.index_name
-            AND ch.id = ci.chunk_id
-            AND h.id = ci.hypertable_id
+        
             AND h.schema_name = main.schema_name
             AND h.table_name = main.table_name
         GROUP BY h.schema_name, ci.hypertable_index_name;
@@ -2517,26 +2380,4 @@ CREATE TABLE IF NOT EXISTS  _timescaledb_cache.cache_inval_hypertable();
 -- etc.
 CREATE TABLE IF NOT EXISTS  _timescaledb_cache.cache_inval_extension();
 
--- not actually strictly needed but good for sanity as all tables should be dumped.
-SELECT pg_catalog.pg_extension_config_dump('_timescaledb_cache.cache_inval_hypertable', '');
-SELECT pg_catalog.pg_extension_config_dump('_timescaledb_cache.cache_inval_extension', '');
-
-DROP TRIGGER IF EXISTS "0_cache_inval" ON _timescaledb_catalog.hypertable;
-CREATE TRIGGER "0_cache_inval" AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON _timescaledb_catalog.hypertable
-FOR EACH STATEMENT EXECUTE PROCEDURE _timescaledb_cache.invalidate_relcache_trigger('cache_inval_hypertable');
-
-DROP TRIGGER IF EXISTS "0_cache_inval" ON _timescaledb_catalog.chunk;
-CREATE TRIGGER "0_cache_inval" AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON _timescaledb_catalog.chunk
-FOR EACH STATEMENT EXECUTE PROCEDURE _timescaledb_cache.invalidate_relcache_trigger('cache_inval_hypertable');
-
-DROP TRIGGER IF EXISTS "0_cache_inval" ON _timescaledb_catalog.chunk_constraint;
-CREATE TRIGGER "0_cache_inval" AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON _timescaledb_catalog.chunk_constraint
-FOR EACH STATEMENT EXECUTE PROCEDURE _timescaledb_cache.invalidate_relcache_trigger('cache_inval_hypertable');
-
-DROP TRIGGER IF EXISTS "0_cache_inval" ON _timescaledb_catalog.dimension_slice;
-CREATE TRIGGER "0_cache_inval" AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON _timescaledb_catalog.dimension_slice
-FOR EACH STATEMENT EXECUTE PROCEDURE _timescaledb_cache.invalidate_relcache_trigger('cache_inval_hypertable');
-
-DROP TRIGGER IF EXISTS "0_cache_inval" ON _timescaledb_catalog.dimension;
-CREATE TRIGGER "0_cache_inval" AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON _timescaledb_catalog.dimension
-FOR EACH STATEMENT EXECUTE PROCEDURE _timescaledb_cache.invalidate_relcache_trigger('cache_inval_hypertable');
+-- remove validation checksf
