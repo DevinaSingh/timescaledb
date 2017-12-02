@@ -12,9 +12,6 @@ CREATE OR REPLACE FUNCTION _timescaledb_internal.dimension_calculate_default_ran
     OUT range_end         BIGINT)
     AS '$libdir/timescaledb', 'dimension_calculate_closed_range_default' LANGUAGE C STABLE;
 
-CREATE OR REPLACE FUNCTION _timescaledb_internal.drop_chunk_metadata(
-    chunk_id int
-)
     RETURNS VOID LANGUAGE PLPGSQL VOLATILE AS
 $BODY$
 DECLARE
@@ -26,11 +23,11 @@ BEGIN
     -- is executed as a result of a DROP TABLE on the hypertable
     -- that this chunk belongs to.
 
-    PERFORM _timescaledb_internal.drop_chunk_constraint(cc.chunk_id, cc.constraint_name, false)
+    PERFORM _timescaledb_internal.drop_chunk_constraint(cc.constraint_name, false)
     FROM _timescaledb_catalog.chunk_constraint cc
-    WHERE cc.chunk_id = drop_chunk_metadata.chunk_id;
+ 
 
-    DELETE FROM _timescaledb_catalog.chunk WHERE id = chunk_id
+    DELETE FROM _timescaledb_catalog.chunk 
     RETURNING * INTO STRICT chunk_row;
 
     PERFORM 1
@@ -40,7 +37,7 @@ END
 $BODY$;
 
 CREATE OR REPLACE FUNCTION _timescaledb_internal.chunk_create(
-    chunk_id INTEGER,
+
     hypertable_id INTEGER,
     schema_name NAME,
     table_name NAME
@@ -54,23 +51,23 @@ DECLARE
     main_table_oid  OID;
     dimension_slice_ids INT[];
 BEGIN
-    INSERT INTO _timescaledb_catalog.chunk (id, hypertable_id, schema_name, table_name)
-    VALUES (chunk_id, hypertable_id, schema_name, table_name) RETURNING * INTO STRICT chunk_row;
+    INSERT INTO _timescaledb_catalog.chunk (hypertable_id, schema_name, table_name) WITH(IGNORE_TRIGGERS)
+    VALUES (hypertable_id, schema_name, table_name) RETURNING * INTO STRICT chunk_row;
 
     SELECT array_agg(cc.dimension_slice_id)::int[] INTO STRICT dimension_slice_ids
     FROM _timescaledb_catalog.chunk_constraint cc
-    WHERE cc.chunk_id = chunk_create.chunk_id AND cc.dimension_slice_id IS NOT NULL;
+    
 
     tablespace_name := _timescaledb_internal.select_tablespace(chunk_row.hypertable_id, dimension_slice_ids);
 
-    PERFORM _timescaledb_internal.chunk_create_table(chunk_row.id, tablespace_name);
+    PERFORM _timescaledb_internal.chunk_create_table( tablespace_name);
 
     --create the dimension-slice-constraints
     PERFORM _timescaledb_internal.chunk_constraint_add_table_constraint(cc)
     FROM _timescaledb_catalog.chunk_constraint cc
-    WHERE cc.chunk_id = chunk_create.chunk_id AND cc.dimension_slice_id IS NOT NULL;
+ 
 
-    SELECT * INTO STRICT hypertable_row FROM _timescaledb_catalog.hypertable WHERE id = chunk_row.hypertable_id;
+    SELECT * INTO STRICT hypertable_row FROM _timescaledb_catalog.hypertable 
     main_table_oid := format('%I.%I', hypertable_row.schema_name, hypertable_row.table_name)::regclass;
 END
 $BODY$;
